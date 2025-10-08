@@ -87,9 +87,36 @@
     }
   </script>
   <script>
+    let device, context, colorBuffer, pipeline, positionBuffer;
+
+    function drawTriangle() {
+      const colorTexture = context.getCurrentTexture();
+      const colorTextureView = colorTexture.createView();
+
+      const colorAttachment = {
+        view: colorTextureView,
+        clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        loadOp: "clear",
+        storeOp: "store",
+      };
+
+      const renderPassDesc = { colorAttachments: [colorAttachment] };
+
+      const commandEncoder = device.createCommandEncoder();
+      const passEncoder = commandEncoder.beginRenderPass(renderPassDesc);
+
+      passEncoder.setPipeline(pipeline);
+      passEncoder.setVertexBuffer(0, positionBuffer);
+      passEncoder.setVertexBuffer(1, colorBuffer);
+      passEncoder.draw(3, 1);
+      passEncoder.end();
+
+      device.queue.submit([commandEncoder.finish()]);
+    }
+
     async function webgpu(vertex0Color, vertex1Color, vertex2Color) {
       const adapter = await navigator.gpu.requestAdapter();
-      const device = await adapter.requestDevice();
+      device = await adapter.requestDevice();
 
       const code = document.getElementById("shader").innerText;
       const shaderDesc = { code };
@@ -101,34 +128,35 @@
         format: "float32x3",
       };
 
-      const colorPositionAttribDesc = {
+      const colorAttribDesc = {
         shaderLocation: 1, // @location(1),
-        offset: 4 * 3,
+        offset: 0,
         format: "float32x3",
       };
 
       const positionBufferLayoutDesc = {
-        attributes: [positionAttribDesc, colorPositionAttribDesc],
-        arrayStride: 4 * (3 + 3), // sizeof(float) * (vertex indices + rgb)
+        attributes: [positionAttribDesc],
+        arrayStride: 4 * 3, // sizeof(float) * 3
+        stepMode: "vertex",
+      };
+
+      const colorBufferLayoutDesc = {
+        attributes: [colorAttribDesc],
+        arrayStride: 4 * 3, // sizeof(float) * 3
         stepMode: "vertex",
       };
 
       const positions = new Float32Array([
-        0.5,
-        -0.25,
-        0.0,
+        0.5, -0.25, 0.0, -0.5, -0.25, 0.0, 0.0, 0.5, 0.0,
+      ]);
+
+      const colors = new Float32Array([
         vertex2Color.r,
         vertex2Color.g,
         vertex2Color.b,
-        -0.5,
-        -0.25,
-        0.0,
         vertex1Color.r,
         vertex1Color.g,
         vertex1Color.b,
-        0.0,
-        0.5,
-        0.0,
         vertex0Color.r,
         vertex0Color.g,
         vertex0Color.b,
@@ -140,10 +168,21 @@
         mappedAtCreation: true,
       };
 
-      const positionBuffer = device.createBuffer(positionBufferDesc);
+      const colorBufferDesc = {
+        size: colors.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+        mappedAtCreation: true,
+      };
+
+      positionBuffer = device.createBuffer(positionBufferDesc);
       const writeArray = new Float32Array(positionBuffer.getMappedRange());
       writeArray.set(positions);
       positionBuffer.unmap();
+
+      colorBuffer = device.createBuffer(colorBufferDesc);
+      const colorWriteArray = new Float32Array(colorBuffer.getMappedRange());
+      colorWriteArray.set(colors);
+      colorBuffer.unmap();
 
       const pipelineLayoutDesc = { bindGroupLayouts: [] };
       const layout = device.createPipelineLayout(pipelineLayoutDesc);
@@ -157,7 +196,7 @@
         vertex: {
           module: shaderModule,
           entryPoint: "vs_main",
-          buffers: [positionBufferLayoutDesc],
+          buffers: [positionBufferLayoutDesc, colorBufferLayoutDesc],
         },
         fragment: {
           module: shaderModule,
@@ -171,8 +210,8 @@
         },
       };
 
-      const pipeline = device.createRenderPipeline(pipelineDesc);
-      const context = canvas.getContext("webgpu");
+      pipeline = device.createRenderPipeline(pipelineDesc);
+      context = canvas.getContext("webgpu");
 
       const canvasConfig = {
         device,
@@ -182,30 +221,7 @@
       };
       context.configure(canvasConfig);
 
-      const colorTexture = context.getCurrentTexture();
-      const colorTextureView = colorTexture.createView();
-
-      const colorAttachement = {
-        view: colorTextureView,
-        clearValue: { r: 0, g: 0, b: 0, a: 1 },
-        loadOp: "clear",
-        storeOp: "store",
-      };
-
-      const renderPassDesc = {
-        colorAttachments: [colorAttachement],
-      };
-
-      const commandEncoder = device.createCommandEncoder();
-      const passEncoder = commandEncoder.beginRenderPass(renderPassDesc);
-
-      passEncoder.setViewport(0, 0, canvas.width, canvas.height, 0, 1);
-      passEncoder.setPipeline(pipeline);
-      passEncoder.setVertexBuffer(0, positionBuffer);
-      passEncoder.draw(3, 1);
-      passEncoder.end();
-
-      device.queue.submit([commandEncoder.finish()]);
+      drawTriangle();
     }
 
     function hexToRgb(hex) {
@@ -230,7 +246,20 @@
       let vertex2ColorValue = hexToRgb(vertex2Input.value);
 
       const renderWebGPU = async () => {
-        await webgpu(vertex0ColorValue, vertex1ColorValue, vertex2ColorValue);
+        const colors = new Float32Array([
+          vertex2ColorValue.r,
+          vertex2ColorValue.g,
+          vertex2ColorValue.b,
+          vertex1ColorValue.r,
+          vertex1ColorValue.g,
+          vertex1ColorValue.b,
+          vertex0ColorValue.r,
+          vertex0ColorValue.g,
+          vertex0ColorValue.b,
+        ]);
+
+        device.queue.writeBuffer(colorBuffer, 0, colors);
+        drawTriangle();
       };
 
       vertex0Input.addEventListener("input", function (event) {
@@ -248,7 +277,7 @@
         renderWebGPU();
       });
 
-      renderWebGPU();
+      webgpu(vertex0ColorValue, vertex1ColorValue, vertex2ColorValue);
     }
 
     main();
