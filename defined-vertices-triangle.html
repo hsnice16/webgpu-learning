@@ -4,14 +4,63 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Defined Vertices Triangle</title>
+    <style>
+      body {
+        gap: 4rem;
+        display: flex;
+        padding: 4rem;
+        align-items: center;
+        justify-content: center;
+        font-family: sans-serif;
+      }
+
+      .inputs-container {
+        gap: 2rem;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .inputs-container label {
+        gap: 0.5rem;
+        display: flex;
+        align-items: end;
+        flex-direction: column;
+      }
+
+      .inputs-container label span {
+        font-size: 1.25rem;
+      }
+
+      .inputs-container input {
+        margin-left: 1rem;
+      }
+
+      canvas {
+        width: 440px;
+        height: 440px;
+        border-radius: 50%;
+      }
+    </style>
   </head>
   <body>
-    <canvas
-      id="canvas"
-      width="440"
-      height="440"
-      style="border-radius: 50%"
-    ></canvas>
+    <div class="inputs-container">
+      <label for="vertex-0">
+        <span> Vertex 0 </span>
+        <input id="vertex-0" type="color" value="#e3e486" />
+      </label>
+
+      <label for="vertex-1">
+        <span> Vertex 1 </span>
+        <input id="vertex-1" type="color" value="#a8c591" />
+      </label>
+
+      <label for="vertex-2">
+        <span> Vertex 2 </span>
+        <input id="vertex-2" type="color" value="#ffccfd" />
+      </label>
+    </div>
+
+    <canvas id="canvas" width="440" height="440"></canvas>
   </body>
   <script id="shader" type="wgsl">
     struct VertexInput {
@@ -38,7 +87,7 @@
     }
   </script>
   <script>
-    async function webgpu() {
+    async function webgpu(vertex0Color, vertex1Color, vertex2Color) {
       const adapter = await navigator.gpu.requestAdapter();
       const device = await adapter.requestDevice();
 
@@ -65,8 +114,24 @@
       };
 
       const positions = new Float32Array([
-        0.5, -0.25, 0.0, 0.0, 1.0, 1.0, -0.5, -0.25, 0.0, 1.0, 0.0, 1.0, 0.0,
-        0.5, 0.0, 1.0, 1.0, 0.0,
+        0.5,
+        -0.25,
+        0.0,
+        vertex2Color.r,
+        vertex2Color.g,
+        vertex2Color.b,
+        -0.5,
+        -0.25,
+        0.0,
+        vertex1Color.r,
+        vertex1Color.g,
+        vertex1Color.b,
+        0.0,
+        0.5,
+        0.0,
+        vertex0Color.r,
+        vertex0Color.g,
+        vertex0Color.b,
       ]);
 
       const positionBufferDesc = {
@@ -143,6 +208,49 @@
       device.queue.submit([commandEncoder.finish()]);
     }
 
-    webgpu();
+    function hexToRgb(hex) {
+      // Remove the '#' if present
+      const cleanHex = hex.startsWith("#") ? hex.slice(1) : hex;
+
+      // Parse R, G, B components
+      const r = parseInt(cleanHex.substring(0, 2), 16) / 255.0;
+      const g = parseInt(cleanHex.substring(2, 4), 16) / 255.0;
+      const b = parseInt(cleanHex.substring(4, 6), 16) / 255.0;
+
+      return { r, g, b };
+    }
+
+    function main() {
+      const vertex0Input = document.getElementById("vertex-0");
+      const vertex1Input = document.getElementById("vertex-1");
+      const vertex2Input = document.getElementById("vertex-2");
+
+      let vertex0ColorValue = hexToRgb(vertex0Input.value);
+      let vertex1ColorValue = hexToRgb(vertex1Input.value);
+      let vertex2ColorValue = hexToRgb(vertex2Input.value);
+
+      const renderWebGPU = async () => {
+        await webgpu(vertex0ColorValue, vertex1ColorValue, vertex2ColorValue);
+      };
+
+      vertex0Input.addEventListener("input", function (event) {
+        vertex0ColorValue = hexToRgb(event.target.value);
+        renderWebGPU();
+      });
+
+      vertex1Input.addEventListener("input", function (event) {
+        vertex1ColorValue = hexToRgb(event.target.value);
+        renderWebGPU();
+      });
+
+      vertex2Input.addEventListener("input", function (event) {
+        vertex2ColorValue = hexToRgb(event.target.value);
+        renderWebGPU();
+      });
+
+      renderWebGPU();
+    }
+
+    main();
   </script>
 </html>
