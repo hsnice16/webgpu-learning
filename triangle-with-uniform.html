@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Triangle with Uniform</title>
+    <style>
+      body {
+        gap: 4rem;
+        display: flex;
+        padding: 4rem;
+        align-items: center;
+        justify-content: center;
+        font-family: sans-serif;
+      }
+
+      .inputs-container {
+        gap: 2rem;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .inputs-container label {
+        gap: 0.5rem;
+        display: flex;
+        align-items: end;
+        flex-direction: column;
+      }
+
+      .inputs-container label span {
+        font-size: 1.25rem;
+      }
+
+      .inputs-container input {
+        margin-left: 1rem;
+      }
+
+      .inputs-container p {
+        text-align: right;
+      }
+
+      canvas {
+        width: 440px;
+        height: 440px;
+        border-radius: 50%;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="inputs-container">
+      <label for="canvas-background">
+        <span>Background</span>
+        <input type="color" id="canvas-background" value="#000000" />
+      </label>
+
+      <label for="vertex-0">
+        <span>Vertex 0</span>
+        <input type="color" id="vertex-0" value="#e3e486" />
+      </label>
+
+      <label for="vertex-1">
+        <span>Vertex 1</span>
+        <input type="color" id="vertex-1" value="#a8c591" />
+      </label>
+
+      <label for="vertex-2">
+        <span>Vertex 2</span>
+        <input type="color" id="vertex-2" value="#ffccfd" />
+      </label>
+
+      <p>---------------</p>
+
+      <label for="offset">
+        <span>Offset <span id="offset-value">(0.0)</span></span>
+        <input
+          min="-0.9"
+          max="0.9"
+          step="0.1"
+          id="offset"
+          value="0.0"
+          type="range"
+        />
+      </label>
+    </div>
+
+    <canvas id="canvas" width="440" height="440"></canvas>
+  </body>
+  <script id="shader" type="wgsl">
+    struct VertexInput {
+      @location(0) pos: vec3<f32>,
+      @location(1) col: vec3<f32>,
+    };
+
+    struct VertexOutput {
+      @builtin(position) clip_position: vec4<f32>,
+      @location(0) color: vec3<f32>,
+    };
+
+    @group(0) @binding(0)
+    var<uniform> offset: vec3<f32>;
+
+    @vertex
+    fn vs_main(in: VertexInput) -> VertexOutput {
+      var out: VertexOutput;
+      out.clip_position = vec4<f32>(in.pos + offset, 1.0);
+      out.color = in.col;
+      return out;
+    }
+
+    @fragment
+    fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+      return vec4<f32>(in.color, 1.0);
+    }
+  </script>
+  <script>
+    let device,
+      context,
+      colorBuffer,
+      pipeline,
+      positionBuffer,
+      uniformBuffer,
+      uniformBindGroup;
+
+    function drawTriangle(r = 0, g = 0, b = 0) {
+      const colorTexture = context.getCurrentTexture();
+      const colorTextureView = colorTexture.createView();
+
+      const colorAttachment = {
+        view: colorTextureView,
+        clearValue: { r, g, b, a: 1 },
+        loadOp: "clear",
+        storeOp: "store",
+      };
+
+      const renderPassDesc = { colorAttachments: [colorAttachment] };
+
+      const commandEncoder = device.createCommandEncoder();
+      const passEncoder = commandEncoder.beginRenderPass(renderPassDesc);
+
+      passEncoder.setPipeline(pipeline);
+      passEncoder.setVertexBuffer(0, positionBuffer);
+      passEncoder.setVertexBuffer(1, colorBuffer);
+      passEncoder.setBindGroup(0, uniformBindGroup);
+      passEncoder.draw(3, 1);
+      passEncoder.end();
+
+      device.queue.submit([commandEncoder.finish()]);
+    }
+
+    async function webgpu(vertex0Color, vertex1Color, vertex2Color) {
+      const adapter = await navigator.gpu.requestAdapter();
+      device = await adapter.requestDevice();
+
+      const code = document.getElementById("shader").innerText;
+      const shaderDesc = { code };
+      const shaderModule = device.createShaderModule(shaderDesc);
+
+      const positionAttribDesc = {
+        shaderLocation: 0, // @location(0),
+        offset: 0,
+        format: "float32x3",
+      };
+
+      const colorAttribDesc = {
+        shaderLocation: 1, // @location(1),
+        offset: 0,
+        format: "float32x3",
+      };
+
+      const positionBufferLayoutDesc = {
+        attributes: [positionAttribDesc],
+        arrayStride: 4 * 3, // sizeof(float) * 3
+        stepMode: "vertex",
+      };
+
+      const colorBufferLayoutDesc = {
+        attributes: [colorAttribDesc],
+        arrayStride: 4 * 3, // sizeof(float) * 3
+        stepMode: "vertex",
+      };
+
+      const positions = new Float32Array([
+        0.5, -0.25, 0.0, -0.5, -0.25, 0.0, 0.0, 0.5, 0.0,
+      ]);
+
+      const colors = new Float32Array([
+        vertex2Color.r,
+        vertex2Color.g,
+        vertex2Color.b,
+        vertex1Color.r,
+        vertex1Color.g,
+        vertex1Color.b,
+        vertex0Color.r,
+        vertex0Color.g,
+        vertex0Color.b,
+      ]);
+
+      const uniformData = new Float32Array([0.0, 0.0, 0.0]);
+
+      const positionBufferDesc = {
+        size: positions.byteLength,
+        usage: GPUBufferUsage.VERTEX,
+        mappedAtCreation: true,
+      };
+
+      const colorBufferDesc = {
+        size: colors.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+        mappedAtCreation: true,
+      };
+
+      const uniformBufferDesc = {
+        size: uniformData.byteLength,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        mappedAtCreation: true,
+      };
+
+      positionBuffer = device.createBuffer(positionBufferDesc);
+      const writeArray = new Float32Array(positionBuffer.getMappedRange());
+      writeArray.set(positions);
+      positionBuffer.unmap();
+
+      colorBuffer = device.createBuffer(colorBufferDesc);
+      const colorWriteArray = new Float32Array(colorBuffer.getMappedRange());
+      colorWriteArray.set(colors);
+      colorBuffer.unmap();
+
+      uniformBuffer = device.createBuffer(uniformBufferDesc);
+      const uniformWriteArray = new Float32Array(
+        uniformBuffer.getMappedRange()
+      );
+      uniformWriteArray.set(uniformData);
+      uniformBuffer.unmap();
+
+      const uniformBindGroupLayout = device.createBindGroupLayout({
+        entries: [
+          {
+            binding: 0,
+            visibility: GPUShaderStage.VERTEX,
+            buffer: {},
+          },
+        ],
+      });
+
+      uniformBindGroup = device.createBindGroup({
+        layout: uniformBindGroupLayout,
+        entries: [
+          {
+            binding: 0,
+            resource: {
+              buffer: uniformBuffer,
+            },
+          },
+        ],
+      });
+
+      const pipelineLayoutDesc = { bindGroupLayouts: [uniformBindGroupLayout] };
+      const layout = device.createPipelineLayout(pipelineLayoutDesc);
+
+      const colorState = {
+        format: "bgra8unorm",
+      };
+
+      const pipelineDesc = {
+        layout,
+        vertex: {
+          module: shaderModule,
+          entryPoint: "vs_main",
+          buffers: [positionBufferLayoutDesc, colorBufferLayoutDesc],
+        },
+        fragment: {
+          module: shaderModule,
+          entryPoint: "fs_main",
+          targets: [colorState],
+        },
+        primitive: {
+          topology: "triangle-list",
+          frontFace: "cw",
+          cullMode: "back",
+        },
+      };
+
+      pipeline = device.createRenderPipeline(pipelineDesc);
+      context = canvas.getContext("webgpu");
+
+      const canvasConfig = {
+        device,
+        format: navigator.gpu.getPreferredCanvasFormat(),
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        alphaMode: "opaque",
+      };
+
+      context.configure(canvasConfig);
+      drawTriangle();
+    }
+
+    function hexToRgb(hex) {
+      // Remove the '#' if present
+      const cleanHex = hex.startsWith("#") ? hex.slice(1) : hex;
+
+      // Parse R, G, B components
+      const r = parseInt(cleanHex.substring(0, 2), 16) / 255.0;
+      const g = parseInt(cleanHex.substring(2, 4), 16) / 255.0;
+      const b = parseInt(cleanHex.substring(4, 6), 16) / 255.0;
+
+      return { r, g, b };
+    }
+
+    function main() {
+      const offsetInput = document.getElementById("offset");
+      const vertex0Input = document.getElementById("vertex-0");
+      const vertex1Input = document.getElementById("vertex-1");
+      const vertex2Input = document.getElementById("vertex-2");
+      const offsetValueEle = document.getElementById("offset-value");
+      const canvasBgInput = document.getElementById("canvas-background");
+
+      let vertex0ColorValue = hexToRgb(vertex0Input.value);
+      let vertex1ColorValue = hexToRgb(vertex1Input.value);
+      let vertex2ColorValue = hexToRgb(vertex2Input.value);
+      let canvasBgColorValue = hexToRgb(canvasBgInput.value);
+
+      const renderWebGPU = async () => {
+        const colors = new Float32Array([
+          vertex2ColorValue.r,
+          vertex2ColorValue.g,
+          vertex2ColorValue.b,
+          vertex1ColorValue.r,
+          vertex1ColorValue.g,
+          vertex1ColorValue.b,
+          vertex0ColorValue.r,
+          vertex0ColorValue.g,
+          vertex0ColorValue.b,
+        ]);
+
+        device.queue.writeBuffer(colorBuffer, 0, colors);
+        drawTriangle(
+          canvasBgColorValue.r,
+          canvasBgColorValue.g,
+          canvasBgColorValue.b
+        );
+      };
+
+      vertex0Input.addEventListener("input", function (event) {
+        vertex0ColorValue = hexToRgb(event.target.value);
+        renderWebGPU();
+      });
+
+      vertex1Input.addEventListener("input", function (event) {
+        vertex1ColorValue = hexToRgb(event.target.value);
+        renderWebGPU();
+      });
+
+      vertex2Input.addEventListener("input", function (event) {
+        vertex2ColorValue = hexToRgb(event.target.value);
+        renderWebGPU();
+      });
+
+      canvasBgInput.addEventListener("input", function (event) {
+        canvasBgColorValue = hexToRgb(event.target.value);
+        renderWebGPU();
+      });
+
+      offsetInput.addEventListener("input", function (event) {
+        const value = Number(event.target.value);
+
+        offsetValueEle.innerHTML = `(${value})`;
+        let uniformData = new Float32Array([value, value, value]);
+        if (value < 0) {
+          uniformData = new Float32Array([value, value, Math.abs(value)]);
+        }
+
+        device.queue.writeBuffer(uniformBuffer, 0, uniformData);
+        drawTriangle(
+          canvasBgColorValue.r,
+          canvasBgColorValue.g,
+          canvasBgColorValue.b
+        );
+      });
+
+      webgpu(vertex0ColorValue, vertex1ColorValue, vertex2ColorValue);
+    }
+
+    main();
+  </script>
+</html>
