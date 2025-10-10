@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Projection</title>
+    <style>
+      body {
+        gap: 4rem;
+        display: flex;
+        padding: 4rem;
+        align-items: center;
+        justify-content: center;
+        font-family: sans-serif;
+      }
+
+      .inputs-container {
+        gap: 2rem;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .inputs-container label {
+        gap: 0.5rem;
+        display: flex;
+        align-items: end;
+        flex-direction: column;
+      }
+
+      .inputs-container label span {
+        font-size: 1.25rem;
+      }
+
+      .inputs-container input {
+        margin-left: 1rem;
+      }
+
+      .inputs-container p {
+        text-align: right;
+      }
+
+      canvas {
+        width: 440px;
+        height: 440px;
+        border-radius: 50%;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="inputs-container">
+      <label for="canvas-background">
+        <span>Background</span>
+        <input type="color" id="canvas-background" value="#ffb3b3" />
+      </label>
+    </div>
+
+    <canvas id="canvas" width="440" height="440"></canvas>
+  </body>
+  <script src="./toji-gl-matrix/gl-matrix.js"></script>
+  <script id="shader" type="wgsl">
+    struct VertexInput {
+      @location(0) pos: vec3<f32>,
+      @location(1) texCoords:vec2<f32>,
+    };
+
+    struct VertexOutput {
+      @builtin(position) clip_position: vec4<f32>,
+      @location(0) tex_coords: vec2<f32>,
+    };
+
+    @group(0) @binding(0)
+    var<uniform> transform: mat4x4<f32>;
+    @group(0) @binding(1)
+    var<uniform> projection: mat4x4<f32>;
+
+    @vertex
+    fn vs_main(in: VertexInput) -> VertexOutput {
+      var out: VertexOutput;
+      out.clip_position = projection * transform * vec4<f32>(in.pos, 1.0);
+      out.tex_coords = in.texCoords;
+      return out;
+    }
+
+    @group(0) @binding(2)
+    var t_diffuse: texture_2d<f32>;
+    @group(0) @binding(3)
+    var s_diffuse: sampler;
+
+    @fragment
+    fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+      return textureSample(t_diffuse, s_diffuse, in.tex_coords);
+    }
+  </script>
+  <script>
+    let device,
+      context,
+      texCoordsBuffer,
+      pipeline,
+      positionBuffer,
+      uniformBindGroup;
+
+    function drawTriangle(r = 0, g = 0, b = 0) {
+      const colorTexture = context.getCurrentTexture();
+      const colorTextureView = colorTexture.createView();
+
+      const colorAttachment = {
+        view: colorTextureView,
+        clearValue: { r, g, b, a: 1 },
+        loadOp: "clear",
+        storeOp: "store",
+      };
+
+      const renderPassDesc = { colorAttachments: [colorAttachment] };
+
+      const commandEncoder = device.createCommandEncoder();
+      const passEncoder = commandEncoder.beginRenderPass(renderPassDesc);
+
+      passEncoder.setPipeline(pipeline);
+      passEncoder.setVertexBuffer(0, positionBuffer);
+      passEncoder.setVertexBuffer(1, texCoordsBuffer);
+      passEncoder.setBindGroup(0, uniformBindGroup);
+      passEncoder.draw(3, 1);
+      passEncoder.end();
+
+      device.queue.submit([commandEncoder.finish()]);
+    }
+
+    async function webgpu(r, g, b) {
+      const adapter = await navigator.gpu.requestAdapter();
+      device = await adapter.requestDevice();
+
+      const code = document.getElementById("shader").innerText;
+      const shaderDesc = { code };
+      const shaderModule = device.createShaderModule(shaderDesc);
+
+      const positionAttribDesc = {
+        shaderLocation: 0, // @location(0),
+        offset: 0,
+        format: "float32x3",
+      };
+
+      const texCoordsAttribDesc = {
+        shaderLocation: 1, // @location(1),
+        offset: 0,
+        format: "float32x2",
+      };
+
+      const positionBufferLayoutDesc = {
+        attributes: [positionAttribDesc],
+        arrayStride: 4 * 3, // sizeof(float) * 3
+        stepMode: "vertex",
+      };
+
+      const texCoordsBufferLayoutDesc = {
+        attributes: [texCoordsAttribDesc],
+        arrayStride: 4 * 2, // sizeof(float) * 2
+        stepMode: "vertex",
+      };
+
+      const positions = new Float32Array([
+        1.0, -1.0, 0.0, -1.0, -1.0, 0.0, 0.0, 0.1, 0.0,
+      ]);
+
+      const texCoords = new Float32Array([
+        1.0, 1.0,
+
+        0.0, 1.0,
+
+        0.5, 0.0,
+      ]);
+
+      const transformationMatrix = glMatrix.mat4.lookAt(
+        glMatrix.mat4.create(),
+        glMatrix.vec3.fromValues(2, -2, 2),
+        glMatrix.vec3.fromValues(0, 0, 0),
+        glMatrix.vec3.fromValues(0.0, 1.0, 0.0)
+      );
+
+      const projectionMatrix = glMatrix.mat4.perspective(
+        glMatrix.mat4.create(),
+        1.4,
+        440.0 / 440.0,
+        0.1,
+        1000.0
+      );
+
+      console.log("transformationMatrix", transformationMatrix);
+      console.log("projectionMatrix", projectionMatrix);
+
+      const positionBufferDesc = {
+        size: positions.byteLength,
+        usage: GPUBufferUsage.VERTEX,
+        mappedAtCreation: true,
+      };
+
+      const texCoordsBufferDesc = {
+        size: texCoords.byteLength,
+        usage: GPUBufferUsage.VERTEX,
+        mappedAtCreation: true,
+      };
+
+      const transformationMatrixUniformBufferDesc = {
+        size: transformationMatrix.byteLength,
+        usage: GPUBufferUsage.UNIFORM,
+        mappedAtCreation: true,
+      };
+
+      const projectionMatrixUniformBufferDesc = {
+        size: projectionMatrix.byteLength,
+        usage: GPUBufferUsage.UNIFORM,
+        mappedAtCreation: true,
+      };
+
+      positionBuffer = device.createBuffer(positionBufferDesc);
+      const writeArray = new Float32Array(positionBuffer.getMappedRange());
+      writeArray.set(positions);
+      positionBuffer.unmap();
+
+      texCoordsBuffer = device.createBuffer(texCoordsBufferDesc);
+      const texCoordsWriteArray = new Float32Array(
+        texCoordsBuffer.getMappedRange()
+      );
+      texCoordsWriteArray.set(texCoords);
+      texCoordsBuffer.unmap();
+
+      const transformationMatrixUniformBuffer = device.createBuffer(
+        transformationMatrixUniformBufferDesc
+      );
+      const transformationMatrixUniformWriteArray = new Float32Array(
+        transformationMatrixUniformBuffer.getMappedRange()
+      );
+      transformationMatrixUniformWriteArray.set(transformationMatrix);
+      transformationMatrixUniformBuffer.unmap();
+
+      const projectionMatrixUniformBuffer = device.createBuffer(
+        projectionMatrixUniformBufferDesc
+      );
+      const projectionMatrixUniformWriteArray = new Float32Array(
+        projectionMatrixUniformBuffer.getMappedRange()
+      );
+      projectionMatrixUniformWriteArray.set(projectionMatrix);
+      projectionMatrixUniformBuffer.unmap();
+
+      const uniformBindGroupLayout = device.createBindGroupLayout({
+        entries: [
+          {
+            binding: 0,
+            visibility: GPUShaderStage.VERTEX,
+            buffer: {},
+          },
+          {
+            binding: 1,
+            visibility: GPUShaderStage.VERTEX,
+            buffer: {},
+          },
+          {
+            binding: 2,
+            visibility: GPUShaderStage.FRAGMENT,
+            texture: {},
+          },
+          {
+            binding: 3,
+            visibility: GPUShaderStage.FRAGMENT,
+            sampler: {},
+          },
+        ],
+      });
+
+      const response = await fetch("./solo-leveling.jpg");
+      const blob = await response.blob();
+      const imgBitmap = await createImageBitmap(blob);
+
+      const textureDesc = {
+        size: { width: imgBitmap.width, height: imgBitmap.height },
+        format: "rgba8unorm",
+        usage:
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+      };
+
+      const texture = device.createTexture(textureDesc);
+      device.queue.copyExternalImageToTexture(
+        { source: imgBitmap },
+        { texture },
+        textureDesc.size
+      );
+
+      const sampler = device.createSampler({
+        addressModeU: "repeat",
+        addressModeV: "repeat",
+        magFilter: "linear",
+        minFilter: "linear",
+        mipmapFilter: "linear",
+      });
+
+      uniformBindGroup = device.createBindGroup({
+        layout: uniformBindGroupLayout,
+        entries: [
+          {
+            binding: 0,
+            resource: {
+              buffer: transformationMatrixUniformBuffer,
+            },
+          },
+          {
+            binding: 1,
+            resource: {
+              buffer: projectionMatrixUniformBuffer,
+            },
+          },
+          {
+            binding: 2,
+            resource: texture.createView(),
+          },
+          {
+            binding: 3,
+            resource: sampler,
+          },
+        ],
+      });
+
+      const pipelineLayoutDesc = { bindGroupLayouts: [uniformBindGroupLayout] };
+      const layout = device.createPipelineLayout(pipelineLayoutDesc);
+
+      const colorState = {
+        format: "bgra8unorm",
+      };
+
+      const pipelineDesc = {
+        layout,
+        vertex: {
+          module: shaderModule,
+          entryPoint: "vs_main",
+          buffers: [positionBufferLayoutDesc, texCoordsBufferLayoutDesc],
+        },
+        fragment: {
+          module: shaderModule,
+          entryPoint: "fs_main",
+          targets: [colorState],
+        },
+        primitive: {
+          topology: "triangle-list",
+          frontFace: "cw",
+          cullMode: "back",
+        },
+      };
+
+      pipeline = device.createRenderPipeline(pipelineDesc);
+      context = canvas.getContext("webgpu");
+
+      const canvasConfig = {
+        device,
+        format: navigator.gpu.getPreferredCanvasFormat(),
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        alphaMode: "opaque",
+      };
+
+      context.configure(canvasConfig);
+      drawTriangle(r, g, b);
+    }
+
+    function hexToRgb(hex) {
+      // Remove the '#' if present
+      const cleanHex = hex.startsWith("#") ? hex.slice(1) : hex;
+
+      // Parse R, G, B components
+      const r = parseInt(cleanHex.substring(0, 2), 16) / 255.0;
+      const g = parseInt(cleanHex.substring(2, 4), 16) / 255.0;
+      const b = parseInt(cleanHex.substring(4, 6), 16) / 255.0;
+
+      return { r, g, b };
+    }
+
+    function main() {
+      const canvasBgInput = document.getElementById("canvas-background");
+
+      let canvasBgColorValue = hexToRgb(canvasBgInput.value);
+
+      const renderWebGPU = async () => {
+        drawTriangle(
+          canvasBgColorValue.r,
+          canvasBgColorValue.g,
+          canvasBgColorValue.b
+        );
+      };
+
+      canvasBgInput.addEventListener("input", function (event) {
+        canvasBgColorValue = hexToRgb(event.target.value);
+        renderWebGPU();
+      });
+
+      webgpu(canvasBgColorValue.r, canvasBgColorValue.g, canvasBgColorValue.b);
+    }
+
+    main();
+  </script>
+</html>
