@@ -184,7 +184,7 @@
 
       const uniformTransformData = glMatrix.mat4.fromTranslation(
         glMatrix.mat4.create(),
-        glMatrix.vec3.fromValues(-0.5, -0.5, 0.0)
+        glMatrix.vec3.fromValues(0.0, 0.0, 0.0)
       );
 
       const positionBufferDesc = {
@@ -354,9 +354,16 @@
         const value = Number(event.target.value);
 
         offsetValueEle.innerHTML = `(${value})`;
-        let uniformData = new Float32Array([value, value, value]);
+        let uniformData = glMatrix.mat4.fromTranslation(
+          glMatrix.mat4.create(),
+          glMatrix.vec3.fromValues(value, value, value)
+        );
+
         if (value < 0) {
-          uniformData = new Float32Array([value, value, Math.abs(value)]);
+          uniformData = glMatrix.mat4.fromTranslation(
+            glMatrix.mat4.create(),
+            glMatrix.vec3.fromValues(value, value, Math.abs(value))
+          );
         }
 
         device.queue.writeBuffer(uniformBuffer, 0, uniformData);
