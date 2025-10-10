@@ -70,6 +70,7 @@
 
     <canvas id="canvas" width="440" height="440"></canvas>
   </body>
+  <script src="./toji-gl-matrix/gl-matrix.js"></script>
   <script id="shader" type="wgsl">
     struct VertexInput {
       @location(0) pos: vec3<f32>,
@@ -82,12 +83,12 @@
     };
 
     @group(0) @binding(0)
-    var<uniform> offset: vec3<f32>;
+    var<uniform> transform: mat4x4<f32>;
 
     @vertex
     fn vs_main(in: VertexInput) -> VertexOutput {
       var out: VertexOutput;
-      out.clip_position = vec4<f32>(in.pos + offset, 1.0);
+      out.clip_position = transform * vec4<f32>(in.pos, 1.0);
       out.tex_coords = in.texCoords;
       return out;
     }
@@ -181,7 +182,10 @@
         0.5, 0.0,
       ]);
 
-      const uniformData = new Float32Array([0.0, 0.0, 0.0]);
+      const uniformTransformData = glMatrix.mat4.fromTranslation(
+        glMatrix.mat4.create(),
+        glMatrix.vec3.fromValues(-0.5, -0.5, 0.0)
+      );
 
       const positionBufferDesc = {
         size: positions.byteLength,
@@ -196,7 +200,7 @@
       };
 
       const uniformBufferDesc = {
-        size: uniformData.byteLength,
+        size: uniformTransformData.byteLength,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         mappedAtCreation: true,
       };
@@ -217,7 +221,7 @@
       const uniformWriteArray = new Float32Array(
         uniformBuffer.getMappedRange()
       );
-      uniformWriteArray.set(uniformData);
+      uniformWriteArray.set(uniformTransformData);
       uniformBuffer.unmap();
 
       const uniformBindGroupLayout = device.createBindGroupLayout({
