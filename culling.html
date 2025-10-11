@@ -202,7 +202,13 @@
           frontFace: "ccw",
           cullMode: "none",
         },
+        depthStencil: {
+          depthWriteEnabled: true,
+          depthCompare: "less",
+          format: "depth24plus-stencil8",
+        },
       };
+
       const pipeline = device.createRenderPipeline(pipelineDesc);
 
       const context = canvas.getContext("webgpu");
@@ -214,6 +220,16 @@
       };
       context.configure(canvasConfig);
 
+      const depthTextureDesc = {
+        size: [canvas.width, canvas.height, 1],
+        dimension: "2d",
+        format: "depth24plus-stencil8",
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      };
+
+      const depthTexture = device.createTexture(depthTextureDesc);
+      const depthTextureView = depthTexture.createView();
+
       const colorTexture = context.getCurrentTexture();
       const colorTextureView = colorTexture.createView();
 
@@ -224,8 +240,19 @@
         storeOp: "store",
       };
 
+      const depthAttachment = {
+        view: depthTextureView,
+        depthClearValue: 1,
+        depthLoadOp: "clear",
+        depthStoreOp: "store",
+        stencilClearValue: 0,
+        stencilLoadOp: "clear",
+        stencilStoreOp: "store",
+      };
+
       const renderPassDesc = {
         colorAttachments: [colorAttachment],
+        depthStencilAttachment: depthAttachment,
       };
 
       const commandEncoder = device.createCommandEncoder();
