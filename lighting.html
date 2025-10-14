@@ -44,7 +44,9 @@
 
     struct VertexOutput {
       @builtin(position) clip_position: vec4<f32>,
-      @location(0) color: vec3<f32>
+      @location(0) viewDir: vec3<f32>,
+      @location(1) normal: vec3<f32>,
+      @location(2) lightDir: vec3<f32>
     };
 
     @vertex
@@ -52,21 +54,25 @@
       @location(0) inPos: vec3<f32>,
       @location(1) inNormal: vec3<f32>
     ) -> VertexOutput {
-      var n:vec3<f32> = normalize((normal * vec4<f32>(inNormal, 0.0)).xyz);
-      var viewDir:vec3<f32> = normalize((normal * vec4<f32>(-viewDirection, 0.0)).xyz);
-      var lightDir:vec3<f32> = normalize((normal * vec4<f32>(-lightDirection, 0.0)).xyz);
-
-      var radiance:vec3<f32> = ambientColor.rgb * ambientConstant + diffuse(lightDir, n, diffuseColor.rgb) * diffuseConstant + specular(lightDir, viewDir, n, specularColor.rgb, shininess) * specularConstant;
-
       var out: VertexOutput;
+
+      out.viewDir = normalize((normal * vec4<f32>(-viewDirection, 0.0)).xyz);
+      out.lightDir = normalize((normal * vec4<f32>(-lightDirection, 0.0)).xyz);
+      out.normal = normalize((normal * vec4<f32>(inNormal, 0.0)).xyz);
+
       out.clip_position = projection * transform * vec4<f32>(inPos, 1.0);
-      out.color = radiance;
       return out;
     }
 
     @fragment
-    fn fs_main(in: VertexOutput, @builtin(front_facing) face: bool) -> @location(0) vec4<f32> {
-      return vec4<f32>(in.color, 1.0);
+    fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+      var lightDir:vec3<f32> = in.lightDir;
+      var n:vec3<f32> = normalize(in.normal);
+      var viewDir:vec3<f32> = in.viewDir;
+
+      var radiance:vec3<f32> = ambientColor.rgb * ambientConstant + diffuse(lightDir, n, diffuseColor.rgb) * diffuseConstant + specular(lightDir, viewDir, n, specularColor.rgb, shininess) * specularConstant;
+
+      return vec4<f32>(radiance, 1.0);
     }
   </script>
   <script>
