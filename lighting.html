@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lighting</title>
+  </head>
+  <body>
+    <canvas id="canvas" width="640" height="480"></canvas>
+  </body>
+  <script src="./toji-gl-matrix/gl-matrix.js"></script>
+  <script src="./utils/OBJFile.js"></script>
+  <script id="shader" type="wgsl">
+    @group(0) @binding(0)
+    var<uniform> transform: mat4x4<f32>;
+    @group(0) @binding(1)
+    var<uniform> projection: mat4x4<f32>;
+    @group(0) @binding(2)
+    var<uniform> normal: mat4x4<f32>;
+    @group(0) @binding(3)
+    var<uniform> lightDirection: vec3<f32>;
+    @group(0) @binding(4)
+    var<uniform> viewDirection: vec3<f32>;
+
+    const ambientColor:vec4<f32> = vec4<f32>(0.15, 0.0, 0.0, 1.0);
+    const diffuseColor:vec4<f32> = vec4<f32>(0.25, 0.25, 0.25, 1.0);
+    const specularColor:vec4<f32> = vec4<f32>(1.0, 1.0, 1.0, 1.0);
+
+    const shininess:f32 = 20.0;
+
+    const diffuseConstant:f32 = 1.0;
+    const specularConstant:f32 = 1.0;
+    const ambientConstant:f32 = 1.0;
+
+    fn specular(lightDir:vec3<f32>, viewDir:vec3<f32>, normal:vec3<f32>, specularColor:vec3<f32>, shininess:f32) -> vec3<f32> {
+      var reflectDir:vec3<f32> = reflect(-lightDir, normal);
+      var specDot:f32 = max(dot(reflectDir, viewDir), 0.0);
+      return pow(specDot, shininess) * specularColor;
+    }
+
+    fn diffuse(lightDir:vec3<f32>, normal:vec3<f32>, diffuseColor:vec3<f32>) -> vec3<f32> {
+      return max(dot(lightDir, normal), 0.0) * diffuseColor;
+    }
+
+    struct VertexOutput {
+      @builtin(position) clip_position: vec4<f32>,
+      @location(0) color: vec3<f32>
+    };
+
+    @vertex
+    fn vs_main(
+      @location(0) inPos: vec3<f32>,
+      @location(1) inNormal: vec3<f32>
+    ) -> VertexOutput {
+      var n:vec3<f32> = normalize((normal * vec4<f32>(inNormal, 0.0)).xyz);
+      var viewDir:vec3<f32> = normalize((normal * vec4<f32>(-viewDirection, 0.0)).xyz);
+      var lightDir:vec3<f32> = normalize((normal * vec4<f32>(-lightDirection, 0.0)).xyz);
+
+      var radiance:vec3<f32> = ambientColor.rgb * ambientConstant + diffuse(lightDir, n, diffuseColor.rgb) * diffuseConstant + specular(lightDir, viewDir, n, specularColor.rgb, shininess) * specularConstant;
+
+      var out: VertexOutput;
+      out.clip_position = projection * transform * vec4<f32>(inPos, 1.0);
+      out.color = radiance;
+      return out;
+    }
+
+    @fragment
+    fn fs_main(in: VertexOutput, @builtin(front_facing) face: bool) -> @location(0) vec4<f32> {
+      return vec4<f32>(in.color, 1.0);
+    }
+  </script>
+  <script>
+    async function webgpu() {
+      const adapter = await navigator.gpu.requestAdapter();
+      const device = await adapter.requestDevice();
+
+      const positionAttribDesc = {
+        shaderLocation: 0, // @location(0)
+        offset: 0,
+        format: "float32x3",
+      };
+
+      const positionBufferLayoutDesc = {
+        attributes: [positionAttribDesc],
+        arrayStride: 4 * 3, // sizeof(float) * 3
+        stepMode: "vertex",
+      };
+
+      const normalAttribDesc = {
+        shaderLocation: 1, // @location(1)
+        offset: 0,
+        format: "float32x3",
+      };
+
+      const normalBufferLayoutDesc = {
+        attributes: [normalAttribDesc],
+        arrayStride: 4 * 3, // sizeof(float) * 3
+        stepMode: "vertex",
+      };
+
+      const objResponse = await fetch("./data/teapot.obj");
+      const objBody = await objResponse.text();
+
+      const obj = await (async () => {
+        return new Promise((resolve, reject) => {
+          let obj = new OBJFile(objBody);
+          obj.parse();
+          resolve(obj);
+        });
+      })();
+
+      let positions = [];
+      let normals = [];
+
+      for (const v of obj.result.models[0].vertices) {
+        positions.push(v.x);
+        positions.push(v.y);
+        positions.push(v.z);
+
+        normals.push(0.0);
+        normals.push(0.0);
+        normals.push(0.0);
+      }
+
+      positions = new Float32Array(positions);
+      normals = new Float32Array(normals);
+
+      const positionBufferDesc = {
+        size: positions.byteLength,
+        usage: GPUBufferUsage.VERTEX,
+        mappedAtCreation: true,
+      };
+
+      const positionBuffer = device.createBuffer(positionBufferDesc);
+      let writeArray = new Float32Array(positionBuffer.getMappedRange());
+      writeArray.set(positions);
+      positionBuffer.unmap();
+
+      let indices = [];
+
+      for (const f of obj.result.models[0].faces) {
+        const points = [];
+        const facetIndices = [];
+
+        for (const v of f.vertices) {
+          const index = v.vertexIndex - 1;
+          indices.push(index);
+
+          const vertex = glMatrix.vec3.fromValues(
+            positions[index * 3],
+            positions[index * 3 + 1],
+            positions[index * 3 + 2]
+          );
+
+          points.push(vertex);
+          facetIndices.push(index);
+        }
+
+        const v1 = glMatrix.vec3.subtract(
+          glMatrix.vec3.create(),
+          points[1],
+          points[0]
+        );
+        const v2 = glMatrix.vec3.subtract(
+          glMatrix.vec3.create(),
+          points[2],
+          points[0]
+        );
+
+        const cross = glMatrix.vec3.cross(glMatrix.vec3.create(), v1, v2);
+        const normal = glMatrix.vec3.normalize(glMatrix.vec3.create(), cross);
+
+        for (const i of facetIndices) {
+          normals[i * 3] += normal[0];
+          normals[i * 3 + 1] += normal[1];
+          normals[i * 3 + 2] += normal[2];
+        }
+      }
+
+      indices = new Uint16Array(indices);
+
+      const normalBufferDesc = {
+        size: normals.byteLength,
+        usage: GPUBufferUsage.VERTEX,
+        mappedAtCreation: true,
+      };
+
+      const normalBuffer = device.createBuffer(normalBufferDesc);
+      writeArray = new Float32Array(normalBuffer.getMappedRange());
+      writeArray.set(normals);
+      normalBuffer.unmap();
+
+      const indexBufferDesc = {
+        size: indices.byteLength,
+        usage: GPUBufferUsage.INDEX,
+        mappedAtCreation: true,
+      };
+
+      const indexBuffer = device.createBuffer(indexBufferDesc);
+      writeArray = new Uint16Array(indexBuffer.getMappedRange());
+      writeArray.set(indices);
+      indexBuffer.unmap();
+
+      const transformationMatrix = glMatrix.mat4.lookAt(
+        glMatrix.mat4.create(),
+        glMatrix.vec3.fromValues(5, 5, 5),
+        glMatrix.vec3.fromValues(0, 0, 0),
+        glMatrix.vec3.fromValues(0.0, 0.0, 1.0)
+      );
+
+      const transformationMatrixUniformBufferDesc = {
+        size: transformationMatrix.byteLength,
+        usage: GPUBufferUsage.UNIFORM,
+        mappedAtCreation: true,
+      };
+
+      const transformationMatrixUniformBuffer = device.createBuffer(
+        transformationMatrixUniformBufferDesc
+      );
+      writeArray = new Float32Array(
+        transformationMatrixUniformBuffer.getMappedRange()
+      );
+      writeArray.set(transformationMatrix);
+      transformationMatrixUniformBuffer.unmap();
+
+      const transformationMatrixInverse = glMatrix.mat4.invert(
+        glMatrix.mat4.create(),
+        transformationMatrix
+      );
+      const normalMatrix = glMatrix.mat4.transpose(
+        glMatrix.mat4.create(),
+        transformationMatrixInverse
+      );
+
+      const normalMatrixUniformBufferDesc = {
+        size: normalMatrix.byteLength,
+        usage: GPUBufferUsage.UNIFORM,
+        mappedAtCreation: true,
+      };
+
+      const normalMatrixUniformBuffer = device.createBuffer(
+        normalMatrixUniformBufferDesc
+      );
+      writeArray = new Float32Array(normalMatrixUniformBuffer.getMappedRange());
+      writeArray.set(normalMatrix);
+      normalMatrixUniformBuffer.unmap();
+
+      const projectionMatrix = glMatrix.mat4.perspective(
+        glMatrix.mat4.create(),
+        1.4,
+        640.0 / 480.0,
+        0.1,
+        1000.0
+      );
+
+      const projectionMatrixUniformBufferDesc = {
+        size: projectionMatrix.byteLength,
+        usage: GPUBufferUsage.UNIFORM,
+        mappedAtCreation: true,
+      };
+
+      const projectionMatrixUniformBuffer = device.createBuffer(
+        projectionMatrixUniformBufferDesc
+      );
+      writeArray = new Float32Array(
+        projectionMatrixUniformBuffer.getMappedRange()
+      );
+      writeArray.set(projectionMatrix);
+      projectionMatrixUniformBuffer.unmap();
+
+      const lightDirectionBuffer = new Float32Array([-1.0, -1.0, -1.0]);
+
+      const lightDirectionUniformBufferDesc = {
+        size: lightDirectionBuffer.byteLength,
+        usage: GPUBufferUsage.UNIFORM,
+        mappedAtCreation: true,
+      };
+
+      const lightDirectionUniformBuffer = device.createBuffer(
+        lightDirectionUniformBufferDesc
+      );
+      writeArray = new Float32Array(
+        lightDirectionUniformBuffer.getMappedRange()
+      );
+      writeArray.set(lightDirectionBuffer);
+      lightDirectionUniformBuffer.unmap();
+
+      const viewDirectionBuffer = new Float32Array([-1.0, -1.0, -1.0]);
+
+      const viewDirectionUniformBufferDesc = {
+        size: viewDirectionBuffer.byteLength,
+        usage: GPUBufferUsage.UNIFORM,
+        mappedAtCreation: true,
+      };
+
+      const viewDirrectionUniformBuffer = device.createBuffer(
+        viewDirectionUniformBufferDesc
+      );
+      writeArray = new Float32Array(
+        viewDirrectionUniformBuffer.getMappedRange()
+      );
+      writeArray.set(viewDirectionBuffer);
+      viewDirrectionUniformBuffer.unmap();
+
+      const uniformBindGroupLayout = device.createBindGroupLayout({
+        entries: [
+          {
+            binding: 0,
+            visibility: GPUShaderStage.VERTEX,
+            buffer: {},
+          },
+          {
+            binding: 1,
+            visibility: GPUShaderStage.VERTEX,
+            buffer: {},
+          },
+          {
+            binding: 2,
+            visibility: GPUShaderStage.VERTEX,
+            buffer: {},
+          },
+          {
+            binding: 3,
+            visibility: GPUShaderStage.VERTEX,
+            buffer: {},
+          },
+          {
+            binding: 4,
+            visibility: GPUShaderStage.VERTEX,
+            buffer: {},
+          },
+        ],
+      });
+
+      const uniformBindGroup = device.createBindGroup({
+        layout: uniformBindGroupLayout,
+        entries: [
+          {
+            binding: 0,
+            resource: {
+              buffer: transformationMatrixUniformBuffer,
+            },
+          },
+          {
+            binding: 1,
+            resource: {
+              buffer: projectionMatrixUniformBuffer,
+            },
+          },
+          {
+            binding: 2,
+            resource: {
+              buffer: normalMatrixUniformBuffer,
+            },
+          },
+          {
+            binding: 3,
+            resource: {
+              buffer: lightDirectionUniformBuffer,
+            },
+          },
+          {
+            binding: 4,
+            resource: {
+              buffer: viewDirrectionUniformBuffer,
+            },
+          },
+        ],
+      });
+
+      const pipelineLayoutDesc = { bindGroupLayouts: [uniformBindGroupLayout] };
+      const layout = device.createPipelineLayout(pipelineLayoutDesc);
+
+      const colorState = {
+        format: "bgra8unorm",
+      };
+
+      const code = document.getElementById("shader").innerText;
+      const shaderDesc = { code };
+      const shaderModule = device.createShaderModule(shaderDesc);
+
+      const pipelineDesc = {
+        layout,
+        vertex: {
+          module: shaderModule,
+          entryPoint: "vs_main",
+          buffers: [positionBufferLayoutDesc, normalBufferLayoutDesc],
+        },
+        fragment: {
+          module: shaderModule,
+          entryPoint: "fs_main",
+          targets: [colorState],
+        },
+        primitive: {
+          topology: "triangle-list",
+          frontFace: "ccw",
+          cullMode: "none",
+        },
+        depthStencil: {
+          depthWriteEnabled: true,
+          depthCompare: "less",
+          format: "depth24plus-stencil8",
+        },
+      };
+
+      const pipeline = device.createRenderPipeline(pipelineDesc);
+
+      const context = canvas.getContext("webgpu");
+      const canvasConfig = {
+        device,
+        format: navigator.gpu.getPreferredCanvasFormat(),
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        alphaMode: "opaque",
+      };
+      context.configure(canvasConfig);
+
+      const depthTextureDesc = {
+        size: [canvas.width, canvas.height, 1],
+        dimension: "2d",
+        format: "depth24plus-stencil8",
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      };
+
+      const depthTexture = device.createTexture(depthTextureDesc);
+      const depthTextureView = depthTexture.createView();
+
+      const colorTexture = context.getCurrentTexture();
+      const colorTextureView = colorTexture.createView();
+
+      const colorAttachment = {
+        view: colorTextureView,
+        clearValue: { r: 1, g: 0, b: 0, a: 1 },
+        loadOp: "clear",
+        storeOp: "store",
+      };
+
+      const depthAttachment = {
+        view: depthTextureView,
+        depthClearValue: 1,
+        depthLoadOp: "clear",
+        depthStoreOp: "store",
+        stencilClearValue: 0,
+        stencilLoadOp: "clear",
+        stencilStoreOp: "store",
+      };
+
+      const renderPassDesc = {
+        colorAttachments: [colorAttachment],
+        depthStencilAttachment: depthAttachment,
+      };
+
+      const commandEncoder = device.createCommandEncoder();
+      const passEncoder = commandEncoder.beginRenderPass(renderPassDesc);
+
+      passEncoder.setViewport(0, 0, canvas.width, canvas.height, 0, 1);
+      passEncoder.setPipeline(pipeline);
+      passEncoder.setBindGroup(0, uniformBindGroup);
+      passEncoder.setVertexBuffer(0, positionBuffer);
+      passEncoder.setVertexBuffer(1, normalBuffer);
+      passEncoder.setIndexBuffer(indexBuffer, "uint16");
+      passEncoder.drawIndexed(indices.length);
+      passEncoder.end();
+
+      device.queue.submit([commandEncoder.finish()]);
+    }
+
+    webgpu();
+  </script>
+</html>
